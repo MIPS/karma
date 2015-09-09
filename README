@@ -1,0 +1,90 @@
+============= Karma Virtual Machine Monitor ================
+
+Karma is a virtual machine monitor (VMM) designed to efficiently run Linux in a
+virtual machine on top of the Fiasco.OC microkernel. It's design focused on
+simplicity and efficiency. To that end, it does not implement any emulation of
+any device, but resorts to paravirtualization.
+
+Karma requires hardware assisted CPU virtualization, e.g. SVM for AMD CPUs or
+VT for Intel CPUs. It can make use of hardware assisted memory virtualization
+(Nested Paging or ePT), if available.
+
+Karma was created during the diploma thesis of Steffen Liebergeld. You may find
+his thesis in the directory ./doc/. Memory virtualization has been added by Jan
+Nordholz during his diploma thesis, and Divij Gupta during his internship in
+Berlin, both texts be found in ./doc/. The Karma VMM is currently being used as
+a research vehicle at Technische Universität Berlin.
+
+====== Requirements ========================================
+
+* L4Re and Fiasco.OC are tested to build on Ubuntu 10.04.
+
+* Fiasco.OC rev 38 (get it here http://os.inf.tu-dresden.de/fiasco/)
+* L4Re      rev 38 (get it here http://os.inf.tu-dresden.de/L4Re/)
+
+Machine Specs
+* CPU with hardware assisted CPU virtualization (SVM for AMD, VT for Intel)
+* 32bit system
+
+
+======= Building =============================================
+
+* Get L4Re and Fiasco.OC
+
+$ mkdir ~/l4re
+$ svn cat http://svn.tudos.org/repos/oc/tudos/trunk/repomgr | perl - init http://svn.tudos.org/repos/oc/tudos fiasco l4re_snapshot
+
+* Configure Fiasco.OC
+
+$ mkdir ~/l4re/build/
+$ cd ~/l4re/src/kernel/fiasco
+$ make BUILDDIR=~/l4re/build/fiasco
+$ cd ~/l4re/build/fiasco
+$ make menuconfig
+
+* Be sure to enable Virtualization Support.
+
+* Build Fiasco.OC
+
+$ cd l4re/build/fiasco
+$ make
+
+* Build L4Re.
+
+$ cd ~/l4re/src/l4
+$ make B=~/l4re/build/l4re
+$ make O=~/l4re/build/l4re config
+$ make
+
+* Download and build Karma.
+
+$ cd ~/l4re/src/l4/pkg/
+$ git clone git://git.karma-vmm.org/karma-vmm karma
+$ cd ~/l4re/src/l4
+$ make O=~/l4re/build/l4re S=karma
+
+* Download and build Linux for Karma.
+
+$ cd ~/l4re/src/
+$ git clone git://git.karma-vmm.org/karma-linux -b karma_3.3.5 linux
+$ cd ~/l4re/src/linux
+$ make ARCH=i386 O=~/l4re/build/linux karma_defconfig
+$ make ARCH=i386 O=~/l4re/build/linux -j 8
+
+* Build an iso image for Qemu.
+
+$ cd ~/l4re/build/l4re
+$ make grub2iso E=karma MODULES_LIST=$HOME/l4re/src/l4/pkg/karma/config/modules.list.karma_qemu MODULE_SEARCH_PATH=$HOME/l4re/build/l4re:$HOME/l4re/build/fiasco:$HOME/l4re/src/l4/pkg/karma/config:$HOME/l4re/src/l4/pkg/io/config:$HOME/l4re/build/linux/arch/x86/boot
+
+
+======= Running Karma ===========================================
+
+Have a look at the example menu.lst for the modules needed. An example moe
+config Script can be found in the ./config/ directory.
+
+======= Running Karma in Qemu ==================================
+
+* You need Qemu >= 0.15.0.
+
+$ qemu-system-x86_64 -cdrom $HOME/l4re/build/l4re/images/karma.iso -boot c -serial stdio -cpu phenom,+svm -m 512
+

@@ -1,0 +1,19 @@
+modaddr  0x002000000
+
+entry karma
+    kernel   fiasco -serial_esc
+    roottask moe rom/karma.cfg
+    module   karma.cfg
+    module   io.vbus
+    module   x86-legacy.devs
+    module   l4re
+    module   io
+    module   loader
+    module   fb-drv
+    module   rtc
+    module   con
+    module   ned
+    module   karma
+    module   bzImage
+    module   rootfs.ext2.gz
+

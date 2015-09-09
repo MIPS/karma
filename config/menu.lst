@@ -1,0 +1,73 @@
+serial --unit=0 --stop=1 --speed=115200 --parity=no --word=8
+terminal --timeout=0 serial console
+
+default 0
+timeout 10
+color yellow/blue yellow/black
+
+# german keyboard
+setkey parenleft asterisk
+setkey parenright parenleft
+setkey equal parenright
+setkey slash ampersand
+setkey z y
+setkey y z
+setkey minus slash
+setkey colon greater
+setkey semicolon less
+setkey question underscore
+setkey underscore question
+
+set TFTPDIR =  "(nd)/tftpboot"
+set T= $(TFTPDIR)
+set DEMOCD = "$(TFTPDIR)/Democd"
+
+
+set COMPORT = 1
+set FIASCO = "$(TFTPDIR)/fiasco"
+set FIASCO_OPT = "-comport $(COMPORT) -comspeed 115200 -tbuf_entries=32768 -serial_esc"
+set FIASCO2_OPT = "-nokdb -comport $(COMPORT) -tbuf_entries=32768 -serial_esc"
+set ESC_OPT = "-esc"
+
+title Karma
+kernel $(TFTPDIR)/bootstrap -modaddr 0x02000000 -serial
+module $(T)/fiasco_mp $(FIASCO_OPT)
+module $(T)/l4f/sigma0
+module $(T)/l4f/moe rom/karma.cfg
+module $(T)/l4f/l4re
+module $(T)/l4f/ned
+module $(T)/l4f/io
+module $(T)/l4f/con
+module $(T)/l4f/loader
+module $(T)/l4f/rtc
+module $(T)/l4f/fb-drv
+module $(T)/l4f/ankh
+module $(T)/l4f/karma
+module $(T)/bzImage
+module $(T)/rootfs.ext2.gz
+module $(T)/cfg/karma.cfg
+module $(T)/cfg/io.vbus
+module $(T)/cfg/x86-legacy.devs
+vbeset 0x117
+
+title Karma_l4android
+kernel $(TFTPDIR)/bootstrap -modaddr 0x02000000 -serial
+module $(T)/fiasco_mp $(FIASCO_OPT)
+module $(T)/l4f/sigma0
+module $(T)/l4f/moe rom/karma_l4android.cfg
+module $(T)/l4f/l4re
+module $(T)/l4f/ned
+module $(T)/l4f/io
+module $(T)/l4f/con
+module $(T)/l4f/loader
+module $(T)/l4f/rtc
+module $(T)/l4f/fb-drv
+module $(T)/l4f/ankh
+module $(T)/l4f/karma
+module $(T)/bzImage
+module $(T)/root-x86-ginger.img
+module $(T)/system-x86-ginger.img
+module $(T)/cfg/karma_l4android.cfg
+module $(T)/cfg/io.vbus
+module $(T)/cfg/x86-legacy.devs
+vbeset 0x117

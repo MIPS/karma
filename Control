@@ -1,0 +1,3 @@
+requires: stdlibs libstdc++ libio cxx_libc_io shmc_ringbuf rtc ankh libudis86 libvcpu
+maintainer: s1010824@os.inf.tu-dresden.de
+

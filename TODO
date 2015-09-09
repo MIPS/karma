@@ -1,0 +1,12 @@
+
+FEATURES
+- 64bit host and/or guest support
+- make Karma a server (e.g. provide a filesystem for l4re apps)
+- systems debugger
+- snapshots, migration
+- support for systems without hardware assisted CPU virtualization (e.g. ARM)
+- support for Cortex-A15
+- implement VM halt
+
+BUGs:
+- add error checking to karma_df_request_irq
