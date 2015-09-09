@@ -29,6 +29,8 @@ private:
         addr_shift = 0,
         reg_count_mask = 0x07000000,
         reg_count_shift = 24,
+        valid_mask = 0x80000000,
+        invalid_mask = 0x78000000,
     };
     unsigned long _raw_command;
     unsigned long _regs[4];
@@ -53,6 +55,9 @@ public:
     }
     inline const unsigned long & reg(const unsigned char index) const{
         return _regs[index];
+    }
+    inline bool valid() const{
+        return ((_raw_command & valid_mask) && !(_raw_command & invalid_mask));
     }
     void dump() const{
         printf("Hypercall payload dev: %lx addr: %hx regs: %hhx reg0: %lx reg1: %lx reg2: %lx reg3: %lx\n"

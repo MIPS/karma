@@ -22,10 +22,11 @@
 #include <l4/sys/vcpu.h>
 #include <l4/sys/vm>
 
-#include "thread.hpp"
+#include "thread.h"
 #include "l4_lirq.h"
 
 #include <vector>
+#include <assert.h>
 
 void * vcpu_thread_fn(void * vcpu);
 void handler_fn();
@@ -80,19 +81,26 @@ private:
     karma::PTCondBool _setup_finished;
 
     l4_umword_t _affinity;
+    l4_sched_param_t _schedp;
     unsigned _prio;
 
     l4_uint64_t _last_entry; // tsc value during the latest entry
 
     L4_lirq _trip;
+    l4_utcb_t* _vcpu_utcb;
+    inline l4_utcb_t* vcpu_utcb();
 
 public:
-    L4_vcpu(unsigned prio, l4_umword_t affinity = -1);
+    L4_vcpu(unsigned prio);
     virtual ~L4_vcpu();
+private:
+    L4_vcpu(const L4_vcpu& rhs);            // empty copy constructor
+    L4_vcpu& operator=(const L4_vcpu& rhs); // empty assignment constructor
+public:
 
     void prepare();
     void start();
-    void setCPU(int cpu);
+    void set_vcpu_affinity(unsigned int cpu_affinity);
     void trip();
 
     void resumeUser(L4::Cap<L4::Task> user_task);
@@ -107,6 +115,7 @@ protected:
 
 public:
     void handle();
+    void _thread_setup();
     void _setup();
     void disableIrqs();
     void enableIrqs();
@@ -124,15 +133,35 @@ public:
     {
         return _vcpu_state;
     }
+
+private:
+    // Kyma: consider decoupling vz state from vcpu; ideally it should be opaque to vcpu
+    l4_umword_t getTrapNo()
+    {
+        return reinterpret_cast<l4_vm_vz_state_t *>(getExtState())->exit_reason;
+    }
+
+    void setTrapNo(l4_umword_t trapno)
+    {
+        reinterpret_cast<l4_vm_vz_state_t *>(getExtState())->exit_reason =
+            static_cast<L4_vm_exit_reason>(trapno);
+    }
 };
 
-#define MY_VCPU_STATE_PTR current_vcpu().getVcpuState()
-
-extern const pthread_key_t PTHREAD_VCPU_THIS;
-
-inline static L4_vcpu & current_vcpu(){
-    return *reinterpret_cast<L4_vcpu *>(pthread_getspecific(PTHREAD_VCPU_THIS));
+inline l4_utcb_t* L4_vcpu::vcpu_utcb()
+{
+    assert (_vcpu_utcb);
+    return _vcpu_utcb;
 }
 
+extern __thread L4_vcpu* _thread_current_vcpu;
+
+inline static L4_vcpu& current_vcpu()
+{
+    assert (_thread_current_vcpu);
+    return *_thread_current_vcpu;
+}
+
+#define MY_VCPU_STATE_PTR current_vcpu().getVcpuState()
 
 #endif /* L4_VCPU_H_ */

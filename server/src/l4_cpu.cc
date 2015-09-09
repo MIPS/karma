@@ -40,48 +40,27 @@ public:
 L4_cpu::L4_cpu(
         int id,
         L4_os *l4_os):
-        L4_vcpu(params.vcpu_prio, id),
+        L4_vcpu(params.vcpu_prio),
         _id(id),
         _l4_os(l4_os),
         _start_ip(0),
-        _start_sp(0)
+        _start_sp(0),
+        _spawned(false)
 { }
 
-void L4_cpu::dump_exit_reasons()
-{
-    printf("CPU %d exit reasons\n", _id);
-    printf("VMMCALL: %7d ", exit_reason[0]);
-    printf("HLT:     %7d ", exit_reason[1]);
-    printf("vINT:    %7d ", exit_reason[2]);
-    printf("pINT:    %7d ", exit_reason[3]);
-    printf("Intercept%7d ", exit_reason[4]);
-    printf("Injected Interrupt: %7d ", exit_reason[5]);
-    for(int i=0; i<6; i++)
-        exit_reason[i]=0;
-    _l4_apic->dump();
-    _l4_vm_driver->dump();
-}
+L4_cpu::~L4_cpu() {}
 
 void L4_cpu::handle_irq(int irq)
 {
 	GET_VM.gic().checkIRQ(irq);
 
-    _l4_vm_driver->handle_interrupt(*_l4_apic, irq);
+    _l4_vm_driver->handle_interrupt(irq);
     _l4_vm_driver->vmresume();
 }
 
-void L4_cpu::inject_irq(unsigned irq)
-{
-    if(irq == VCPU_IPI_LABEL){
-        if(_l4_apic->nr_pending() == 0) return;
-    }
-    _l4_vm_driver->handle_interrupt(*_l4_apic, irq);
-}
-
-
 void L4_cpu::handle_vmexit()
 {
-    _l4_vm_driver->handle_vmexit(*_l4_apic);
+    _l4_vm_driver->handle_vmexit();
     _l4_vm_driver->vmresume();
 }
 
@@ -108,15 +87,11 @@ void L4_cpu::run()
 
 void L4_cpu::run_intern() {
     _l4_vm_driver = L4_vm_driver::create(_id);
-    if(_start_ip) _l4_vm_driver->set_ip_and_sp(_start_ip, _start_sp);
-    {
-        L4::Cap<L4::Irq> uirq;
-        _l4_apic->get_uirq(uirq);
-        registerInterrupt(*new IPIInterrupt(uirq, *this));
-    }
+    if (_l4_vm_driver == NULL)
+        throw L4_PANIC_EXCEPTION;
 
-    GET_VM.cpu_bus().add(_l4_apic);
-    _l4_apic->init();
+    if(_start_ip)
+        _l4_vm_driver->set_ip_and_sp(_start_ip, _start_sp);
 
     _l4_vm_driver->pre_vmresume();
 
@@ -134,15 +109,13 @@ void L4_cpu::run_intern() {
 void L4_cpu::setup()
 {
     LOCAL_DEVICES_INIT;
-    _l4_apic = &GET_HYPERCALL_DEVICE(apic);
-    karma_log(DEBUG, "setting apic_id to: %x\n", _id);
-    _l4_apic->setId(_id);
 }
 
 void L4_cpu::backtrace()
 {
     printf("This is CPU %d\n", _id);
-    _l4_os->backtrace(_vcpu_state->r.ip, _vcpu_state->r.bp);
+    // KYMA TODO backtrace not implemented
+    //_l4_os->backtrace(_vcpu_state->r.ip, _vcpu_state->r.bp);
     GET_VM.dump_state();
 }
 
@@ -150,7 +123,8 @@ void L4_cpu::dump_state()
 {
     printf("CPU %d\n", _id);
     _l4_vm_driver->dump_state();
-    _l4_os->backtrace(_vcpu_state->r.ip, _vcpu_state->r.bp);
+    // KYMA TODO backtrace not implemented
+    //_l4_os->backtrace(_vcpu_state->r.ip, _vcpu_state->r.bp);
 }
 
 void L4_cpu::get_thread(L4::Cap<L4::Thread> &thread)

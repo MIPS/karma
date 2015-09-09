@@ -1,3 +1,2 @@
-requires: stdlibs libstdc++ libio cxx_libc_io shmc_ringbuf rtc ankh libudis86 libvcpu
-maintainer: s1010824@os.inf.tu-dresden.de
-
+provides: karmalib
+requires: stdlibs libstdc++ libio cxx_libc_io l4util l4sys shmc_ringbuf shmc rtc libvcpu libsigma0

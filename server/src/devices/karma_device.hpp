@@ -1,5 +1,7 @@
+#include <string.h>
 #include "../util/cas.hpp"
 #include <l4/sys/ktrace.h>
+#include <l4/rtc/rtc.h>
 
 class KarmaDevice : public device::IDevice
 {

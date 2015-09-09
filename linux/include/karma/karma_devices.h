@@ -5,9 +5,9 @@
  *      Author: janis
  */
 
-#ifndef KARMA_DEVICES_H_
-#define KARMA_DEVICES_H_
+#ifndef _LINUX_KARMA_DEVICES_H_
+#define _LINUX_KARMA_DEVICES_H_
 
-#include "../../../server/src/devices/devices_list.h"
+#include "../../../include/karma_devices.h"
 
-#endif /* KARMA_DEVICES_H_ */
+#endif /* _LINUX_KARMA_DEVICES_H_ */

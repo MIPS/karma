@@ -1,4 +1,11 @@
 /*
+ * Copyright (C) 2014 Imagination Technologies Ltd.
+ * Author: Yann Le Du <ledu@kymasys.com>
+ *
+ * This file incorporates work covered by the following copyright notice:
+ */
+
+/*
  * l4_vm.cc - TODO enter description
  * 
  * (c) 2011 Janis Danisevskis <janis@sec.t-labs.tu-berlin.de>
@@ -17,27 +24,41 @@
 #include <l4/re/util/cap_alloc>
 #include <l4/re/c/util/cap_alloc.h>
 #include <l4/sys/thread>
-#include <l4/util/rdtsc.h>
 
 #include <malloc.h>
 
-#include "mpspec_def.h"
 #include "l4_exceptions.h"
 #include "l4_mem.h"
 #include "util/debug.h"
-#include "guest_linux.hpp"
 #include "devices/device_init.hpp"
 #include "devices/device_call.hpp"
 #include "devices/devices_list.h"
+#include "devices/shmem.h"
+#include "irqchip.h"
 
-L4_vm::L4_vm(){}
+L4_vm::L4_vm() : _l4_cpu(), _l4_cpu_threads(), _l4_os(0), _gic(0), _l4_mem(0),
+    _online_cpu_map(0), _affinity_mask(0), _cpu_affinity(0),
+    _nr_possible_cpus(0), _nr_online_cpus(0), _nr_available_cpus(0),
+    old_timestamp(0), _old_ns(0), _old_s(0) {}
 
-void L4_vm::init(unsigned int nr_cpus, unsigned int mem_size)
+L4_vm::~L4_vm() {}
+
+void L4_vm::init(unsigned int nr_cpus, unsigned int mem_size, l4_umword_t affinity_mask)
 {
-    _requested_cpus = nr_cpus;
-    _old_ns = 0;
-    _old_s = 0;
     l4_debugger_set_object_name(pthread_getl4cap(pthread_self()), "L4 VM");
+
+    if(discover_cpus(nr_cpus, affinity_mask))
+    {
+        karma_log(ERROR, "Could not query online CPUs. Terminating.\n");
+        exit(1);
+    }
+
+#ifdef KARMA_USE_VM_AFFINITY
+    l4_sched_param_t schedp = l4_sched_param(0);
+    get_vm_affinity(&schedp.affinity);
+    L4Re::Env::env()->scheduler()->run_thread(L4::Cap<L4::Thread>(L4_BASE_THREAD_CAP), schedp);
+    L4Re::Env::env()->scheduler()->run_thread(L4::Cap<L4::Thread>(pthread_getl4cap(pthread_self())), schedp);
+#endif
 
     // get vm capability
     _vm_cap = L4Re::Util::cap_alloc.alloc<L4::Vm>();
@@ -47,39 +68,33 @@ void L4_vm::init(unsigned int nr_cpus, unsigned int mem_size)
         exit(1);
     }
 
-#if 0
-    _kvm_vm_cap = L4Re::Util::cap_alloc.alloc<L4::Vm>();
-    if(!_kvm_vm_cap.is_valid())
-    {
-        karma_log(ERROR, "Could not allocate VM capability for staged virtualization. Terminating.\n");
-        exit(1);
-    }
-#endif
-
     l4_msgtag_t msg = L4Re::Env::env()->factory()->create_vm(_vm_cap);
     if(l4_error(msg))
     {
-        karma_log(ERROR, "Could not get a VM cap from Fiasco.OC.\nPlease ensure your platform supports hardware assisted virtualization (either SVM or VT).\nTerminating.\n");
+        karma_log(ERROR, "Could not get a VM cap from Fiasco.OC.\n"
+                "Please ensure your platform supports hardware assisted virtualization (MIPS VZ)\n"
+                "and that it is enabled for your platform in the kernel configuration.\n"
+                "Terminating.\n");
         exit(1);
     }
-#if 0
-    msg = L4Re::Env::env()->factory()->create_vm(_kvm_vm_cap);
-    if(l4_error(msg))
-    {
-        karma_log(ERROR, "Could not get a VM cap from Fiasco.OC.\nPlease ensure your platform supports hardware assisted virtualization (either SVM or VT).\nTerminating.\n");
-        exit(1);
-    }
-#endif
+
+    l4_debugger_set_object_name(_vm_cap.cap(), "L4 VM usertask");
+
+    _l4_mem = &util::Singleton<L4_mem>::get();
+    _l4_mem->init(mem_size, _vm_cap);
+
+    _l4_os = L4_os::create_os(_l4_mem);
+
+    _gic = &util::Singleton<Gic>::get();
+    _gic->init();
+
+    if (params.paravirt_guest)
+        mipsvz_create_irqchip();
+
     GLOBAL_DEVICES_INIT;
 
-    // prepare memory (proper setup will be done by l4_os)
-    _l4_mem = &GET_HYPERCALL_DEVICE(mem);
-
-    _l4_os = new L4_linux(mem_size, _l4_mem, _vm_cap);
-
-    // prepare (global) devices
-    _gic = &GET_HYPERCALL_DEVICE(gic);
-    _gic->init();
+    GET_HYPERCALL_DEVICE(mem).init();
+    GET_HYPERCALL_DEVICE(gic).init(_gic);
     GET_HYPERCALL_DEVICE(ser).init(karma_irq_ser);
     GET_HYPERCALL_DEVICE(timer).init(karma_irq_timer);
 
@@ -100,22 +115,10 @@ void L4_vm::init(unsigned int nr_cpus, unsigned int mem_size)
             e.print();
         }
     }
-    if(params.net)
-    {
-        try
-        {
-            GET_HYPERCALL_DEVICE(net).init(karma_irq_net);
-        }
-        catch(L4_exception &e)
-        {
-            e.print();
-        }
-    }
     if(params.pci)
     {
         try
         {
-            GET_HYPERCALL_DEVICE(ahci).setIntr(karma_irq_pci);
             GET_HYPERCALL_DEVICE(pci).init();
         }
         catch(L4_exception &e)
@@ -123,172 +126,194 @@ void L4_vm::init(unsigned int nr_cpus, unsigned int mem_size)
             e.print();
         }
     }
+    // Kyma TODO handle multiple instances of shm_prod/shm_cons
+    if(params.shm_prod)
+    {
+        try
+        {
+            GET_HYPERCALL_DEVICE(shm_prod).init(params.shm_prod);
+        }
+        catch(L4_exception &e)
+        {
+            e.print();
+        }
+    }
+    if(params.shm_cons)
+    {
+        try
+        {
+            GET_HYPERCALL_DEVICE(shm_cons).init(params.shm_cons);
+        }
+        catch(L4_exception &e)
+        {
+            e.print();
+        }
+    }
 
-	GET_HYPERCALL_DEVICE(ioport).init();
-    
+#if 0 // KYMA TODO implement IPI support
     // cpu bus for IPI
     _l4_cpu_bus = new L4_cpu_bus();
+#endif
 
-    // look for cpus
-    get_cpus();
-    if(_requested_cpus > _nr_cpus)
-        _requested_cpus = _nr_cpus;
+    allocate_cpus();
+    spawn_cpus();
+}
 
-    // setup mp bios data
-    setup_mp_table();
+void L4_vm::dump_online_cpus()
+{
+    printf("Found %u CPUs.\n", nr_possible_cpus());
 
-    old_timestamp = 0;
+    for (unsigned int i = 0; i < nr_possible_cpus(); i++)
+    {
+        printf("CPU %d is %s.\n", i,
+                (L4Re::Env::env()->scheduler()->is_online(i)) ?
+                "online" : "offline");
+    }
+}
 
-    _present_cpus = 0;
-    for(unsigned int i(0); i != _requested_cpus; ++i){
+/*
+ * Query the system to determine how many and which cpus are online.
+ *
+ * NOTE: The available cpus are numbered contiguously, whereas the online
+ * cpus may not be contiguous if some cpus are offline.
+ */
+int L4_vm::discover_cpus(unsigned int requested_cpus, l4_umword_t affinity_mask)
+{
+    l4_umword_t nr = 0;
+    l4_sched_cpu_set_t cs = l4_sched_cpu_set(0, 0);
+
+    if (l4_error(L4Re::Env::env()->scheduler()->info(&nr, &cs)) < 0)
+        return -1;
+
+    _online_cpu_map = cs.map;
+    _nr_possible_cpus = nr;
+    _nr_online_cpus = __builtin_popcount(cs.map);
+
+    if (requested_cpus < 1)
+        requested_cpus = 1;
+
+    _nr_available_cpus = std::min(_nr_online_cpus, MAX_CPUS);
+    _nr_available_cpus = std::min(_nr_available_cpus, requested_cpus);
+
+    // limit the affinity mask to only online cpus (mask can be zero)
+    _affinity_mask = affinity_mask & _online_cpu_map;
+
+    // set base cpu affinity in case no affinity mask is specified
+    _cpu_affinity = get_nth_cpu(0, _online_cpu_map);
+
+    if (nr_possible_cpus() != nr_available_cpus()) {
+        karma_log(INFO, "CPUs possible:  %d\n", nr_possible_cpus());
+        karma_log(INFO, "CPUs online:    %d\n", nr_online_cpus());
+    }
+    karma_log(INFO, "Virtual CPUs available: %d\n", nr_available_cpus());
+
+    if (_affinity_mask)
+        karma_log(INFO, "Using CPU affinity mask 0x%x\n", (unsigned int)_affinity_mask);
+    else
+        karma_log(INFO, "Using default CPU affinity\n");
+
+    return 0;
+}
+
+/*
+ * This function returns the index of the nth cpu in the cpu bitmap, skipping
+ * any gaps in the cpu map, and wrapping around if n > number cpus in the map.
+ *
+ * n is 0-based.  n will be capped to modulo nr cpus
+ * map represents the cpu bitmap
+ *
+ * returns the 0-based index of the nth cpu, -1 if there is any error.
+ */
+int L4_vm::get_nth_cpu(unsigned int n, l4_umword_t cpu_map)
+{
+    if (!cpu_map)
+        return -1;
+
+    n = n % __builtin_popcount(cpu_map);
+
+    // remove the n-1 lowest bits which are set
+    for (unsigned int i = 0; i < n; i++) {
+        // the (v & -v) trick uses 2's complement math to preserve the lowest
+        // set bit; we then clear that bit
+        cpu_map ^= (cpu_map & -cpu_map);
+    }
+    return __builtin_ffs(cpu_map) - 1;
+}
+
+/*
+ * When the affinity_mask specifies at least one online cpu the vcpu affinities
+ * are selected from this mask, otherwise a default affinity is chosen.
+ */
+void L4_vm::allocate_cpus()
+{
+    if (LOG_LEVEL(DEBUG))
+        dump_online_cpus();
+
+    for (unsigned int i = 0; i < nr_available_cpus(); ++i) {
+        l4_umword_t cpu_map = _affinity_mask ? _affinity_mask : _online_cpu_map;
+        unsigned int cpu_affinity = get_nth_cpu(i, cpu_map);
+
         _l4_cpu[i] = new L4_cpu(i, _l4_os);
+        _l4_cpu[i]->set_vcpu_affinity(cpu_affinity);
         _l4_cpu[i]->prepare();
     }
-
-    // spawn bootup cpu
-    spawn_cpu(0, 0, 0);
 }
 
-void L4_vm::get_cpus() {
-    l4_umword_t nr = 0;
-    _nr_cpus = 0;
-    l4_sched_cpu_set_t cs = l4_sched_cpu_set(0, 0);
-    if (l4_error(L4Re::Env::env()->scheduler()->info(&nr, &cs)) < 0)
+void L4_vm::spawn_cpus()
+{
+    for (unsigned int i = 0; i < nr_available_cpus(); ++i)
+    {
+        spawn_cpu(i, os().get_guest_entrypoint(), 0);
+    }
+}
+
+void L4_vm::get_vm_affinity(l4_sched_cpu_set_t *affinity)
+{
+    if (_affinity_mask)
+        *affinity = l4_sched_cpu_set(0, 0, _affinity_mask);
+    else
+        *affinity = l4_sched_cpu_set(_cpu_affinity, 0, 0x1);
+}
+
+/*
+ * cpuid is zero based cpu index
+ */
+void L4_vm::spawn_cpu(l4_uint32_t cpuid, l4_umword_t eip, l4_umword_t sp)
+{
+    karma_log(DEBUG, "spawn_cpu: cpuid=%d, eip = %lx, sp = %lx\n", cpuid, eip, sp);
+
+    if (!valid_cpuid_index(cpuid)) {
+        karma_log(WARN, "spawn_cpu: cpuid=%d out of range\n", cpuid);
         return;
-    karma_log(INFO, "Found %d CPUs.\n", (int)nr);
-    for(unsigned int i=0; i<=4; i++)
-    {
-        karma_log(TRACE, "Testing CPU %d: ", i);
-        if(L4Re::Env::env()->scheduler()->is_online(i))
-        {
-            _log(TRACE, "online.\n");
-            _nr_cpus++;
-        }
-        else
-        {
-            _log(TRACE, "offline.\n");
-        }
     }
-    karma_log(INFO, "There are %d online CPUs in the system.\n", _nr_cpus);
-}
 
-inline l4_uint8_t mk_checksum(unsigned char *_ptr, int _len)
-{
-    // compute the checksum 
-    // the sum of all bytes has to be zero
-    l4_uint8_t chk = 0;
-    int len = _len;
-    unsigned char *ptr = _ptr;
-    while(len--)
-        chk += *ptr++;
-    return 0xff-chk+1;
-}
-
-// setup in the virtual address space of Karma
-void L4_vm::setup_mp_table()
-{
-    // we store the intel_mp_floating struct into the bios memory area
-    struct intel_mp_floating *imf = (struct intel_mp_floating*)(_l4_mem->base_ptr() + 0xf0000);
-    imf->mpf_signature[0] = '_';
-    imf->mpf_signature[1] = 'M';
-    imf->mpf_signature[2] = 'P';
-    imf->mpf_signature[3] = '_';
-    imf->mpf_physptr = 0xf1000;
-    imf->mpf_specification = 0x4; // 1.4
-    imf->mpf_length = 1;
-    imf->mpf_feature1 = 0;
-    //imf->mpf_feature2 = 1<<7;
-
-
-    imf->mpf_checksum = mk_checksum((unsigned char*)imf, 16);
-
-    // construct mpc_table
-    struct mpc_table *tbl = (struct mpc_table*)(_l4_mem->base_ptr()+ 0xf1000);
-    tbl->signature[0] = 'P';
-    tbl->signature[1] = 'C';
-    tbl->signature[2] = 'M';
-    tbl->signature[3] = 'P';
-    tbl->length  = sizeof(struct mpc_table) + _requested_cpus*sizeof(struct mpc_cpu);
-    tbl->spec = 0x4;
-    tbl->oem[0] = 'S';
-    tbl->oem[1] = 't';
-    tbl->oem[2] = 'e';
-    tbl->oem[3] = 'f';
-    tbl->oem[4] = 'f';
-    tbl->oem[5] = 'e';
-    tbl->oem[6] = 'n';
-    tbl->oem[7] = 0;
-    tbl->productid[0] = 'T';
-    tbl->productid[1] = 'U';
-    tbl->productid[2] = 'D';
-    tbl->productid[3] = 'R';
-    tbl->productid[4] = 'E';
-    tbl->productid[5] = 'S';
-    tbl->productid[6] = 'D';
-    tbl->productid[7] = '.';
-    tbl->productid[8] = 0;
-    tbl->oemptr = 0;
-    tbl->oemcount = 0;
-    tbl->lapic = 0xfffe0000; // standard apic
-    tbl->checksum = 0;
-
-    // add cpus
-    l4_addr_t tmp = (l4_addr_t)tbl;
-    tmp += sizeof(struct mpc_table);
-    struct mpc_cpu *cpu = (struct mpc_cpu*)tmp;
-    cpu->type = MP_PROCESSOR;
-    cpu->apicid = 0;
-    cpu->apicver = 0x1f;
-    cpu->cpuflag = CPU_ENABLED | CPU_BOOTPROCESSOR;
-
-    for(unsigned int i = 1; i<_requested_cpus; i++)
-    {
-        cpu = (struct mpc_cpu*)(tmp + i*sizeof(struct mpc_cpu));
-        cpu->type = MP_PROCESSOR;
-        cpu->apicid = i;
-        cpu->apicver = 0x1f;
-        cpu->cpuflag = CPU_ENABLED;
+    if (_l4_cpu[cpuid]->spawned()) {
+        karma_log(INFO, "spawn_cpu: cpuid=%d already spawned\n", cpuid);
+        return;
     }
-    
-    tbl->checksum = mk_checksum((unsigned char*)tbl, tbl->length);
-}
 
-void L4_vm::spawn_cpu(l4_uint32_t apicid, l4_umword_t eip, l4_umword_t sp)
-{
-    karma_log(DEBUG, "spawn_cpu: apic_id=%d, eip = %lx, sp = %lx\n", apicid, eip, sp);
-    karma_log(DEBUG, "spawn_cpu: apicid %x\n", apicid);
-    int i = apicid;
+    _l4_cpu[cpuid]->set_spawned();
+
     if(eip)
-        _l4_cpu[apicid]->set_ip_and_sp(eip - 0xc0000000, sp);
+        _l4_cpu[cpuid]->set_ip_and_sp(eip, sp);
 
-    // requested a CPU that is not online. Try to place it elsewhere...
-    if(!L4Re::Env::env()->scheduler()->is_online(i))
-        i = i % _nr_cpus;
+    _l4_cpu[cpuid]->get_thread(_l4_cpu_threads[cpuid]);
+    if(cpuid == 0)
+        _gic->set_cpu(*_l4_cpu[cpuid]);
 
-    _l4_cpu[apicid]->get_thread(_l4_cpu_threads[apicid]);
-    if(apicid == 0)
-        _gic->set_cpu(*_l4_cpu[apicid]);
-    _l4_cpu[apicid]->setCPU(i);
-    _l4_cpu[apicid]->start();
-    _present_cpus++;
+    _l4_cpu[cpuid]->start();
 }
 
 void L4_vm::dump_state()
 {
     printf("Dumping the state of all CPUs:\n");
-    for(unsigned int i=0; i<_present_cpus;++i)
+    for(unsigned int i = 0; i < nr_available_cpus(); ++i)
         _l4_cpu[i]->dump_state();
-}
-
-void L4_vm::dump_exit_reasons()
-{
-    for(unsigned int i=0; i<_present_cpus; i++)
-        _l4_cpu[i]->dump_exit_reasons();
-    _l4_cpu_bus->dump();
 }
 
 void L4_vm::print_time()
 {
+#if 0 // KYMA TODO implement print_time
     l4_uint32_t s, ns, seconds = 0, nseconds = 0;
     l4_tsc_to_s_and_ns(l4_rdtsc(), &s, &ns);
     if(_old_s!=0)
@@ -298,10 +323,11 @@ void L4_vm::print_time()
         seconds = s - seconds;
         nseconds = ns - nseconds;
         printf("L4_vm: time diff %2d: %dm %2ds %3dms\n",
-            old_timestamp, seconds/60, seconds%60, nseconds/1000000);
+            _old_timestamp, seconds/60, seconds%60, nseconds/1000000);
     }
-    old_timestamp++;
+    _old_timestamp++;
     _old_s = s;
     _old_ns = ns;
+#endif
 }
 

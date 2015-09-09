@@ -1,4 +1,11 @@
 /*
+ * Copyright (C) 2014 Imagination Technologies Ltd.
+ * Author: Yann Le Du <ledu@kymasys.com>
+ *
+ * This file incorporates work covered by the following copyright notice:
+ */
+
+/*
  * l4_mem.cc - Handle guest memory.
  *
  *  Guest physical memory layout:
@@ -16,7 +23,6 @@
  *
  * Please see the file COPYING-GPL-2 for details.
  */
-//#define DEBUG_LEVEL INFO
 
 #include "l4_mem.h"
 #include "l4_exceptions.h"
@@ -39,28 +45,29 @@
 #include <malloc.h>
 #include <assert.h>
 
-#include "devices/devices_list.h"
 #include "util/debug.h"
 
-L4_mem::L4_mem()
+L4_mem::L4_mem() : _size(0), _ontop_size(0), _ontop_source(0)
 {
-    _size = 0;
     for(int i=0; i<L4_MEM_IO_ENTRIES; i++)
     {
         iomap[i].size = 0;
         iomap[i].addr = 0;
         iomap[i].source = 0;
     }
-    _ontop_size = 0;
-    _ontop_source = 0;
 }
+
+L4_mem::~L4_mem() {}
 
 void L4_mem::init(unsigned int size, L4::Cap<L4::Task> vm_cap)
 {
     int r;
     void *base = 0;
 
-    if(!vm_cap.is_valid())
+    _size = l4_trunc_page(size);
+    _vm_cap = vm_cap;
+
+    if(!_vm_cap.is_valid())
         throw L4_CAPABILITY_EXCEPTION;
 
     _ds_cap = L4Re::Util::cap_alloc.alloc<L4Re::Dataspace>();
@@ -70,16 +77,15 @@ void L4_mem::init(unsigned int size, L4::Cap<L4::Task> vm_cap)
         return;
     }
 
-    size = l4_trunc_page(size);
-    if((r = L4Re::Env::env()->mem_alloc()->alloc((unsigned long)size, _ds_cap,
+    if((r = L4Re::Env::env()->mem_alloc()->alloc((unsigned long)_size, _ds_cap,
         L4Re::Mem_alloc::Continuous|L4Re::Mem_alloc::Pinned|L4Re::Mem_alloc::Super_pages)))
     {
         printf("L4_mem: Error allocating enough memory for vm\n");
         throw L4_EXCEPTION("allocate vm memory");
     }
-    karma_log(DEBUG, "L4_mem: allocated memory\n");
+    karma_log(DEBUG, "[mem] allocated memory\n");
 
-    if((r = L4Re::Env::env()->rm()->attach(&base, size,
+    if((r = L4Re::Env::env()->rm()->attach(&base, _size,
                                             L4Re::Rm::Search_addr,
                                             _ds_cap,
                                             0,
@@ -89,20 +95,22 @@ void L4_mem::init(unsigned int size, L4::Cap<L4::Task> vm_cap)
         throw L4_EXCEPTION("attach vm memory");
     }
 
-    karma_log(DEBUG, "[mem] attached memory address %p, size=%d\n", base, size);
-    assert(((l4_umword_t)base & 0xfff) == 0); // make sure base is page aligned
+    karma_log(DEBUG, "[mem] attached memory address %p, size=%#x\n", base, _size);
+    assert(((l4_umword_t)base & (L4_PAGESIZE - 1)) == 0); // make sure base is page aligned
     _base = base;
 
-    _vm_cap = vm_cap;
-
-    _mem_top = map(0, (l4_addr_t)_base, size, 1);
+    _mem_top = map(0, (l4_addr_t)_base, _size, 1);
 
     _mem_top += L4_MEM_IO_SIZE;
-    _size = size;
-    karma_log(DEBUG, "L4_mem: init done.\n");
-    l4_addr_t linuximage_phy_addr;
-    l4_size_t continuous_region_size;  
-    _ds_cap->phys(0, linuximage_phy_addr, continuous_region_size);
+    karma_log(DEBUG, "[mem] init done.\n");
+
+    if (LOG_LEVEL(DEBUG)) {
+        l4_addr_t vmimage_phy_addr;
+        l4_size_t continuous_region_size;
+        _ds_cap->phys(0, vmimage_phy_addr, continuous_region_size);
+        karma_log(DEBUG, "[mem] vm image mapped to physical address %p, contiguous size=%#x\n",
+                (void*)vmimage_phy_addr, continuous_region_size);
+    }
 }
 
 bool L4_mem::copyin(l4_addr_t source, l4_addr_t start, unsigned int size)
@@ -157,12 +165,13 @@ l4_addr_t L4_mem::map(l4_addr_t dest, l4_addr_t source, unsigned int size, int w
 
     while(mapped_size < size)
     {
-    	/* map superpages, if possible */
-        if(((size - mapped_size) >= (1 << L4_SUPERPAGESHIFT)) &&
-        		!(source & L4_SUPERPAGEMASK) && !(dest & L4_SUPERPAGEMASK))
-        	pageshift = L4_SUPERPAGESHIFT;
+        /* map superpages, if possible */
+        if(((size - mapped_size) >= L4_SUPERPAGESIZE) &&
+                !(source & (L4_SUPERPAGESIZE - 1)) &&
+                !(dest & (L4_SUPERPAGESIZE - 1)))
+            pageshift = L4_SUPERPAGESHIFT;
         else
-        	pageshift = L4_PAGESHIFT;
+            pageshift = L4_PAGESHIFT;
 
         msg = _vm_cap->map(L4Re::Env::env()->task(),
                            l4_fpage(source, pageshift, rights),
@@ -203,7 +212,7 @@ bool L4_mem::register_iomem(l4_addr_t *addr, unsigned int size)
         iomap[i].addr = _size;
     else
         // addresses need to be page aligned...
-        iomap[i].addr = (iomap[i-1].addr + iomap[i-1].size + 0xfff) & ~0xfff;
+        iomap[i].addr = l4_round_page(iomap[i-1].addr + iomap[i-1].size);
     *addr = iomap[i].addr;
     return true;
 }
@@ -212,10 +221,16 @@ l4_addr_t L4_mem::map_iomem(l4_addr_t addr, l4_addr_t source, int write)
 {
     karma_log(DEBUG, "map_iomem(addr = %lx, source = %lx, write = %d)\n",
          (unsigned long)addr, (unsigned long)source, write);
+
+    if (source != (source & L4_PAGEMASK)) {
+        karma_log(ERROR, "map_iomem source is not page aligned.\n");
+        return 0;
+    }
+
     for(int i=0; i<L4_MEM_IO_ENTRIES; i++){
         if(iomap[i].addr == addr){
             iomap[i].source = source;
-	        return map(iomap[i].addr, source, iomap[i].size, write);
+            return map(iomap[i].addr, source, iomap[i].size, write);
         }
     }
     return 0;
@@ -231,52 +246,6 @@ l4_addr_t L4_mem::map_iomem_hard(l4_addr_t addr, l4_addr_t source, unsigned size
     return map(addr, source, size, write, 1);
 }
 
-void L4_mem::make_e820_map()
-{
-    struct e820entry *e820_memmap = (struct e820entry*)(base_ptr() + BPO_E820_MAP);
-    struct e820entry *e820_iomap = e820_memmap + 1;
-
-    /* first entry: all available physical memory */
-    e820_memmap->addr = 0UL;
-    e820_memmap->size = _size;
-    e820_memmap->type = E820_RAM;
-
-    /* second entry: memory mappable I/O space */
-    e820_iomap->addr = _size;
-    e820_iomap->size = L4_MEM_IO_SIZE;
-    e820_iomap->type = E820_RESERVED;
-
-    *(l4_uint8_t*)(base_ptr() + BPO_E820_ENTRIES) = 2;
-}
-
-void L4_mem::hypercall(HypercallPayload & payload)
-{
-    l4_addr_t tmp = 0, ptr = 0;
-    l4_size_t size = 0;
-    l4_umword_t val = payload.reg(0);
-    switch(payload.address())
-    {
-        case karma_mem_df_guest_phys_to_host_phys:
-            ptr = (l4_addr_t)(base_ptr()+val);
-            if(!ptr || !*(int*)ptr)
-                return;
-            _ds_cap->phys(*(l4_addr_t*)ptr, tmp, size);
-            karma_log(DEBUG, "[mem] karma_mem_df_guest_phys_to_host_phys val=%p, guest phys=%p, host_phys=%p size=%d\n",
-                    (void*)val, (void*)*(l4_addr_t*)ptr, (void*)tmp, size);
-            *(l4_addr_t*)ptr = tmp;
-            break;
-        case karma_mem_df_dma_base:
-            ptr = (l4_addr_t)(base_ptr()+val);
-            _ds_cap->phys((l4_addr_t)0, tmp, size);
-            karma_log(DEBUG, "[mem] karma_mem_df_dma_base val=%p, guest phys=%p, host_phys=%p size=%d\n",
-                    (void*)val, (void*)*(l4_addr_t*)ptr, (void*)tmp, size);
-            *(l4_addr_t*)ptr = tmp;
-            break;
-        default:
-            break;
-    }
-}
-
 void L4_mem::unmap_all()
 {
     l4_msgtag_t msg;
@@ -287,22 +256,29 @@ void L4_mem::unmap_all()
     }
 }
 
-int L4_mem::phys_to_karma(const l4_addr_t addr, l4_addr_t & real_addr)
+/**
+ * \brief Translate a guest physical address to the local address space.
+ *
+ * \param  addr       Guest physical address.
+ * \retval local_addr Address in the current address-space.
+ *
+ * \return 0 on success, 1 on error
+ */
+int L4_mem::phys_to_local(const l4_addr_t addr, l4_addr_t * local_addr)
 {
     int i;
 
     /* address points to whatever was mapped "on top" */
     if (addr >= top_ptr() && addr < (top_ptr() + _ontop_size))
     {
-        real_addr = (_ontop_source + addr - top_ptr());
-        //printf("%s: address is part of the ramdisk real_addr = %x\n", __func__, *real_addr);
+        *local_addr = (_ontop_source + addr - top_ptr());
         return 0;
     }
 
     /* address may point into regular memory */
     if (addr < _size)
     {
-        real_addr = (base_ptr() + addr);
+        *local_addr = (base_ptr() + addr);
        return 0;
     }
 
@@ -311,7 +287,7 @@ int L4_mem::phys_to_karma(const l4_addr_t addr, l4_addr_t & real_addr)
     {
         if (addr >= iomap[i].addr && addr < (iomap[i].addr + iomap[i].size))
         {
-            real_addr = (addr - iomap[i].addr + iomap[i].source);
+            *local_addr = (addr - iomap[i].addr + iomap[i].source);
             return 0;
         }
     }
@@ -321,7 +297,7 @@ int L4_mem::phys_to_karma(const l4_addr_t addr, l4_addr_t & real_addr)
     {
         if(addr >= iter->addr && addr < (iter->addr + iter->size))
         {
-            real_addr = (addr - iter->addr + iter->source);
+            *local_addr = (addr - iter->addr + iter->source);
             return 0;
         }
     }
@@ -329,4 +305,22 @@ int L4_mem::phys_to_karma(const l4_addr_t addr, l4_addr_t & real_addr)
     return 1;
 }
 
+/**
+ * \brief Translate a guest physical address to the host physical address.
+ *
+ * \param  guest_phys Guest physical address.
+ * \retval host_phys  Host physical address.
+ * \retval phys_size  Size of largest physically contiguous region in the
+ *                    data space (in bytes).
+ *
+ * \return 0 on success, 1 on error
+ */
+int L4_mem::phys_to_host(const l4_addr_t guest_phys, l4_addr_t * host_phys, l4_size_t * phys_size)
+{
+    long ret = _ds_cap->phys(guest_phys, *host_phys, *phys_size);
+    if (ret == 0)
+        return 0;
 
+    /* I don't know this address */
+    return 1;
+}

@@ -36,7 +36,7 @@ void L4_timer::hypercall(HypercallPayload & payload)
 
 l4_umword_t L4_timer::read(l4_umword_t addr)
 {
-    karma_log(TRACE, "L4_timer: read(addr=<%lx>)\n", addr);
+    karma_log(TRACE, "[TIMER] read(addr=<%lx>)\n", addr);
     switch (addr)
     {
         case L4_timer_init:
@@ -49,11 +49,11 @@ l4_umword_t L4_timer::read(l4_umword_t addr)
 
 void L4_timer::write(l4_umword_t addr, l4_umword_t val)
 {
-    karma_log(TRACE, "L4_timer: write(addr=%lx, val=%lx)\n", addr, val);
+    karma_log(TRACE, "[TIMER] write(addr=%lx, val=%lx)\n", addr, val);
     switch (addr)
     {
         case L4_timer_init:
-            printf("Initialize Timer!\n");
+            karma_log(INFO, "Initialize Timer!\n");
             _ms_sleep = val;
             _enabled = false;
             _timeout = l4_timeout(L4_IPC_TIMEOUT_NEVER,
@@ -63,7 +63,7 @@ void L4_timer::write(l4_umword_t addr, l4_umword_t val)
         case L4_timer_enable:
             if (val == 1) //only periodic timer is enabled, one-shot disabled for now
             {
-                printf("Enable Timer!\n");
+                karma_log(INFO, "Enable Timer!\n");
                 _periodic = val == 1 ? true : false;
                 _ms_sleep = val;
                 _timeout = l4_timeout(L4_IPC_TIMEOUT_NEVER,
@@ -71,7 +71,7 @@ void L4_timer::write(l4_umword_t addr, l4_umword_t val)
                 _enabled = true;
                 reset();
             } else if (val == 0) {
-                printf("Disable timer!\n");
+                karma_log(INFO, "Disable timer!\n");
                 _enabled = false;
                 reset();
             }
@@ -96,14 +96,13 @@ void L4_timer::shutdown()
 
 void L4_timer::run(L4::Cap<L4::Thread> & thread)
 {
-    karma_log(DEBUG, "timer UTCB %p\n", l4_utcb());
+    karma_log(DEBUG, "[TIMER] timer UTCB %p\n", l4_utcb());
     _thread_notifier.lirq()->attach(12, thread);
     static unsigned int timer_tick_val = 0;
-    karma_log(INFO, "Timer running %ldms\n", _ms_sleep);
     _ms_sleep = 10;
     _timeout = l4_timeout(L4_IPC_TIMEOUT_NEVER,
             l4util_micros2l4to(_ms_sleep * 1000));
-    karma_log(INFO, "Timer running %ldms\n", _ms_sleep);
+    karma_log(INFO, "[TIMER] Timer running %ldms\n", _ms_sleep);
     while (_run) 
     {
         if (!_reset || !_enabled)

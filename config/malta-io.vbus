@@ -1,0 +1,66 @@
+# vim:set ft=ioconfig:
+# configuration file for io
+
+#
+# These virtual buses are registerd in io's name space.
+#
+
+# Virtual bus for l4con with access to mouse/keyb input devices
+con_bus => new System_bus()
+{
+  # Scan the hw-root bus for devices that have a compatibility ID (CID)
+  # match for PNP0303, which is a PS/2 controller. And add them with virtual
+  # device wrappers to the BUS.
+  ps2 => wrap(hw-root.match("PNP0[3F]??"));
+}
+
+# Virtual bus for the fb-drv server
+fb => new System_bus()
+{
+  # Use virtual PCI bus that keeps the physical bus structure
+  # because the VESA BIOS may store the physical PCI address
+  # when initialized by the host BIOS
+  PCI0 => new PCI_bus_ident()
+  {
+    # Dummy device 0 on PCI bus 0 makes cirrus VESA BIOS happy
+    host_bridge_dummy => new PCI_dummy_device();
+
+    # Put all display devices on our virtual PCI bus PCI class code 0x03
+    gfx[] => wrap(hw-root.match("PCI/CC_03"));
+  }
+
+  # Add system controller ports for malta video card to fb vbus
+  sysport => wrap(hw-root.SYSPORT);
+}
+
+rtc => new System_bus()
+{
+  # Add the RTC (PNP0B00) as a virtual device
+  rtc => wrap(hw-root.match("PNP0B00"));
+}
+
+# Create a virtual BUS 'live' to give Karma's Guest bus access
+live => new System_bus()
+{
+  # Add virtual PCI bus that keeps physical bus structure instead; This keeps Linux
+  # guest VM happy.
+  PCI0 => new PCI_bus_ident()
+  {
+    # Add all real PCI devices that match the CIDs to the virtual PCI bus
+    # NOTE: PCI/CC_xx means PCI class code == xx.
+    #       CC_01 => storage devices
+    #       CC_02 => network devices
+    #       CC_04 => multimedia devices
+    #       CC_06 => bridge devices
+    #       CC_0c => serial bus devices (USB)
+    pci[] => wrap(hw-root.match("PCI/CC_01,PCI/CC_02,PCI/CC_06"));
+  }
+
+  # Add system controller pci ioports for nic and ide
+  pci_ioport => wrap(hw-root.SYSPORT);
+}
+
+# Create empty system bus for second vm
+vm2_bus => new System_bus()
+{
+}

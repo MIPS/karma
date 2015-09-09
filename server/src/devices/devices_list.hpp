@@ -24,33 +24,30 @@
 #include "cpu_spawner.hpp"
 #include "karma_device.hpp"
 #include "../l4_vm.h"
-#include "apic.h"
-#include "ahci.h"
 #include "bdds.h"
 #include "pci.h"
 #include "fb.h"
 #include "gic.h"
-#include "../l4_mem.h"
+#include "mem.h"
 #include "ser.h"
 #include "timer.h"
-#include "net.h"
-#include "ioport.h"
-#include <cstring>
-#include <stdio.h>
+#include "shmem.h"
 
 DEFINE_GLOBAL_DEVICE(karma, KarmaDevice)
-DEFINE_GLOBAL_DEVICE(mem, L4_mem)
+DEFINE_GLOBAL_DEVICE(mem, MemDevice)
 DEFINE_GLOBAL_DEVICE(vm, CPUSpawner)
-DEFINE_LOCAL_DEVICE(apic, L4_apic)
-DEFINE_GLOBAL_DEVICE(ahci, L4_ahci)
+DEFINE_DUMMY_DEVICE(dummy_local)
+DEFINE_DUMMY_DEVICE(dummy0)
 DEFINE_GLOBAL_DEVICE(bdds, Bdds)
 DEFINE_GLOBAL_DEVICE(pci, L4_pci)
 DEFINE_GLOBAL_DEVICE(fb, L4_fb)
-DEFINE_GLOBAL_DEVICE(gic, Gic)
+DEFINE_GLOBAL_DEVICE(gic, GicDevice)
 DEFINE_GLOBAL_DEVICE(ser, Ser)
 DEFINE_GLOBAL_DEVICE(timer, L4_timer)
-DEFINE_GLOBAL_DEVICE(net, L4_net)
-DEFINE_GLOBAL_DEVICE(ioport, Ioport)
+DEFINE_DUMMY_DEVICE(dummy1)
+DEFINE_DUMMY_DEVICE(dummy2)
+DEFINE_GLOBAL_DEVICE(shm_prod, L4_shm_prod)
+DEFINE_GLOBAL_DEVICE(shm_cons, L4_shm_cons)
 
 // Dummy definition of "arch"-device
 // architecture specifics will be intercepted directly by the vm_driver

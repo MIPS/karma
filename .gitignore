@@ -1,12 +1,10 @@
 **/.svn
 INSTALL
-Makefile
 *.in
 *.m4
 *.cache
 *.log
 *~
-config.h
 *.status
 configure
 depcomp

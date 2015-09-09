@@ -12,7 +12,6 @@
  */
 #pragma once
 
-#include "devices/device_interface.h"
 #include "params.h"
 #include <list>
 #include <l4/re/env>
@@ -24,31 +23,8 @@
 #include <l4/sys/kip.h>
 #include <l4/sigma0/sigma0.h>
 
-#define E820_RAM	1
-#define E820_RESERVED	2
-#define E820_ACPI	3
-#define E820_NVS	4
-#define E820_UNUSABLE	5
-#define BPO_E820_ENTRIES 0x1e8
-#define BPO_E820_MAP 0x2d0
-
 #define L4_MEM_IO_ENTRIES 20
 #define L4_MEM_IO_SIZE 25*1024*1024
-#define MAX_PCI_DEVICES 20
-
-#define UNKNOWN_DEV  0
-#define PCI_DEV      1
-#define FB_DEV       2
-#define EV_DEV       3
-#define NET_DEV_SEND 4
-#define NET_DEV_RECV 5
-
-struct e820entry {
-    l4_uint64_t addr; // start of segment
-    l4_uint64_t size; // size
-    l4_uint32_t type; // type
-} __attribute__((packed));
-
 
 struct iomem {
     l4_addr_t addr;
@@ -56,7 +32,7 @@ struct iomem {
     l4_addr_t source;
 };
 
-class L4_mem : public device::IDevice {
+class L4_mem {
 private:
     void *_base;
     unsigned int _size;
@@ -72,10 +48,12 @@ private:
     std::list<struct iomem> _iomap_hard;
 public:
     L4_mem(void);
-    ~L4_mem(void) {}
+    virtual ~L4_mem(void);
+private:
+    L4_mem(const L4_mem& rhs);            // empty copy constructor
+    L4_mem& operator=(const L4_mem& rhs); // empty assignment constructor
+public:
     void init(unsigned int size, L4::Cap<L4::Task> vm_cap);
-
-    virtual void hypercall(HypercallPayload &);
 
     unsigned int get_mem_size(void);
     l4_addr_t base_ptr(void);
@@ -85,10 +63,9 @@ public:
     bool register_iomem(l4_addr_t *addr, unsigned int size);
     l4_addr_t map_iomem(l4_addr_t addr, l4_addr_t source, int write);
     l4_addr_t map_iomem_hard(l4_addr_t addr, l4_addr_t source, unsigned size, int write);
-    void make_e820_map();
-    // l4_device
 
-    int phys_to_karma(const l4_addr_t addr, l4_addr_t & real_addr);
+    int phys_to_local(const l4_addr_t addr, l4_addr_t * local_addr);
+    int phys_to_host(const l4_addr_t guest_phys, l4_addr_t * host_phys, l4_size_t * size);
     l4_addr_t map(l4_addr_t dest, l4_addr_t source, unsigned int size, int write, int io=0);
 
     void unmap_all();
@@ -98,4 +75,3 @@ private:
     void write(l4_umword_t addr, l4_umword_t val);
     l4_umword_t read(l4_umword_t addr);
 };
-

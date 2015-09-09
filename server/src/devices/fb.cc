@@ -56,8 +56,13 @@ l4re_fb_info_t fb_info;
 void *refresh_thread_func(void *data)
 {
     l4_debugger_set_object_name(pthread_getl4cap(pthread_self()), "L4 FB REFRESH");
+#ifdef KARMA_USE_VM_AFFINITY
+    l4_sched_param_t l4sp = l4_sched_param(0);
+    GET_VM.get_vm_affinity(&l4sp.affinity);
+#else
     l4_sched_param_t l4sp = l4_sched_param(0);
     l4sp.affinity = l4_sched_cpu_set(0, 0);
+#endif
     if(l4_error(L4Re::Env::env()->scheduler()->run_thread((L4::Cap<L4::Thread>)pthread_getl4cap(pthread_self()), l4sp)))
         printf("Irq_thread error setting priority\n");
     L4_fb *fb = (L4_fb*)data;

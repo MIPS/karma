@@ -1,0 +1,8 @@
+Contents:
+
+- rootfs.ext2.gz
+A copy of the x86 root filesystem used in the karma demo which is no longer
+available via: wget http://karma-vmm.org/files/rootfs.ext2.gz
+
+- guestfs.img.gz
+A sample mipsel busybox root filesystem.

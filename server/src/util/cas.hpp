@@ -25,10 +25,19 @@ namespace util{
 
 inline static bool cas8Bcond(l4_uint64_t * location, l4_uint64_t & old_value, const l4_uint64_t new_value)
 {
+#ifdef __L4UTIL_ATOMIC_HAVE_ARCH_CMPXCHG64
     if (l4util_cmpxchg64(location, old_value, new_value) == 0)
     	return false;
 
     return true;
+#else
+    if (*location == old_value) {
+        *location = new_value;
+        return true;
+    } else {
+        return false;
+    }
+#endif
 }
 
 inline static l4_uint32_t cas32(l4_uint32_t * location, const l4_uint32_t new_value)
@@ -42,12 +51,20 @@ inline static l4_uint64_t cas8Badd(l4_uint64_t * location, const l4_uint64_t inc
 {
     l4_uint64_t old, res;
 
+#ifdef __L4UTIL_ATOMIC_HAVE_ARCH_CMPXCHG64
     do {
     	old = *location;
     	res = old + increment;
     } while (!l4util_cmpxchg64(location, old, res));
 
     return res;
+#else
+    old = *location;
+    res = old + increment;
+    *location = res;
+
+    return res;
+#endif
 }
 
 inline static l4_uint32_t cas32add(l4_uint32_t * location, const l4_uint32_t increment)
@@ -61,7 +78,7 @@ inline static l4_uint32_t cas32add(l4_uint32_t * location, const l4_uint32_t inc
  */
 inline l4_uint64_t tsc()
 {
-    return l4re_kip()->clock;
+    return l4_kip_clock(l4re_kip());
 }
 
 class mutex{

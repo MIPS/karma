@@ -16,7 +16,7 @@
 #include "device_interface.h"
 #include "../l4_lirq.h"
 #include "../util/debug.h"
-#include "../thread.hpp"
+#include "../thread.h"
 
 class L4_timer : public device::IDevice, private karma::Thread
 {

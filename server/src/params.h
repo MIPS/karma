@@ -16,26 +16,18 @@ struct __params
 {
     unsigned int asid;
     unsigned int virtual_cpus;
+    unsigned int affinity_mask;
     unsigned int vcpu_prio;
-    char *ankh_shm;
     bool fb;
-    bool net;
     bool pci;
-    bool ahci;
-    bool vtlb;
-    bool hpet;
     const char *kernel_name;
     const char *kernel_opts;
     const char *ramdisk_name;
     const char *bd_image_name;
     unsigned int debug_level;
-};
-
-enum cpu_type
-{
-    AMD_cpu     = 0,
-    Intel_cpu   = 1,
-    Unknown_cpu = -1,
+    const char *shm_prod;
+    const char *shm_cons;
+    bool paravirt_guest;
 };
 
 extern struct __params params;

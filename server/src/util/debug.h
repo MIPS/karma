@@ -10,7 +10,9 @@
  */
 #pragma once
 
-#include "../params.h"
+#include <stdio.h>
+
+extern int debug_level;
 
 #define TRACE   5
 #define DEBUG   4
@@ -22,16 +24,13 @@
 #ifdef DEBUG_LEVEL
 #define LOG_DEBUG_LEVEL DEBUG_LEVEL
 #else
-#define LOG_DEBUG_LEVEL params.debug_level
+#define LOG_DEBUG_LEVEL debug_level
 #endif
+
+#define LOG_LEVEL(level) ((level) <= LOG_DEBUG_LEVEL)
 
 #define karma_log(level, fmt, ...) \
     do { \
-    if(level <= LOG_DEBUG_LEVEL) \
+    if(LOG_LEVEL(level)) \
         printf("Karma: " fmt ,##__VA_ARGS__); \
-    } while(0)
-#define _log(level, fmt, ...) \
-    do { \
-    if(level <= params.debug_level) \
-        printf(fmt, ##__VA_ARGS__); \
     } while(0)

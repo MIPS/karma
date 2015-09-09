@@ -1,0 +1,5 @@
+The libkarma library provides guest VM access to Karma para-virtual devices.
+
+This library is intended to be used in a Karma Guest VM to make hypercalls to
+the Karma VMM.  When Fiasco is used as the Karma Guest OS, bootstrap can use the
+uart driver in this library.

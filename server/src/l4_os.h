@@ -11,18 +11,15 @@
  */
 #pragma once
 
+#include "l4_mem.h"
+
 class L4_os
 {
-protected:
-    // _idt and _gdt are given as guest physical addresses!
-    l4_addr_t _gdt, _idt;
 public:
-    l4_addr_t get_gdt() { return _gdt; }
-    l4_addr_t get_idt() { return _idt; }
-    virtual void setup_os() =0;
-    virtual void backtrace(l4_umword_t addr, l4_umword_t val) =0;
-    virtual l4_addr_t get_ramdisk_addr() = 0; //returns the address to which the ramdisk dataspace is attached
-    virtual l4_addr_t get_guest_ramdisk_addr() = 0;
-    virtual l4_addr_t get_ramdisk_size() = 0;
+    static L4_os * create_os(L4_mem *l4_mem);
+    virtual void setup_os() = 0;
+    virtual void guest_os_init(void *context) = 0;
+    virtual void backtrace(l4_umword_t addr, l4_umword_t val) = 0;
+    virtual l4_addr_t get_guest_entrypoint() = 0;
 };
 

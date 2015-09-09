@@ -1,4 +1,11 @@
 /*
+ * Copyright (C) 2014 Imagination Technologies Ltd.
+ * Author: Yann Le Du <ledu@kymasys.com>
+ *
+ * This file incorporates work covered by the following copyright notice:
+ */
+
+/*
  * l4_gic.h - TODO enter description
  * 
  * (c) 2011 Janis Danisevskis <janis@sec.t-labs.tu-berlin.de>
@@ -23,25 +30,15 @@
 #include <l4/sys/factory>
 
 #include "device_interface.h"
-#include "../l4_exceptions.h"
+#include "devices_list.h"
 
-#include <stdlib.h>
-#include <cstdio>
-#include <string.h>
-#include <map>
 #include <list>
 
 class L4_apic;
 class L4_cpu;
 
-struct l4_gic_shared_state
-{
-    l4_uint32_t _enabled;
-    l4_uint32_t _level_trigered;
-};
-
 #define NR_INTR 16
-class Gic : public device::IDevice
+class Gic
 {
 private:
     class postponed_attach
@@ -55,7 +52,7 @@ private:
     };
 
     std::list<postponed_attach> _postponed_attach_list;
-    l4_gic_shared_state * _shared_state;
+    karma_gic_shared_state * _shared_state;
     l4_addr_t _shared_state_gpa;
 
 private:
@@ -63,16 +60,15 @@ private:
     L4_cpu * _cpu;
     bool _hasVCPU, _enable_uirq;
 
-    l4_umword_t read(l4_umword_t addr);
-    void write(l4_umword_t addr, l4_umword_t val);
-
 public:
     Gic();
     virtual ~Gic();
+private:
+    Gic(const Gic& rhs);            // empty copy constructor
+    Gic& operator=(const Gic& rhs); // empty assignment constructor
+public:
     void init();
     void set_cpu(L4_cpu & cpu);
-
-    virtual void hypercall(HypercallPayload &);
 
     void attach(L4::Cap<L4::Irq> & lirq, l4_umword_t as, bool level = false);
     void attach(l4_umword_t irq_no, l4_umword_t as = -1, bool level = false);
@@ -81,5 +77,30 @@ public:
     void unmask(l4_umword_t label);
     bool isMasked(l4_umword_t label) const;
     void checkIRQ(l4_umword_t label);
+#if 1 // KYMA GIC_PENDING
+    void pending(l4_umword_t label);
+    l4_umword_t pending();
+    void ack(l4_umword_t label);
+#endif
+    unsigned long enabled() {
+        return _shared_state->_enabled;
+    }
+    l4_addr_t shared_state_gpa() {
+        return _shared_state_gpa;
+    }
+};
+
+class GicDevice : public device::IDevice {
+public:
+    GicDevice();
+
+    virtual void hypercall(HypercallPayload &);
+
+    void init(Gic *gic);
+    l4_umword_t read(l4_umword_t addr);
+    void write(l4_umword_t addr, l4_umword_t val);
+
+private:
+    Gic *_gic;
 };
 

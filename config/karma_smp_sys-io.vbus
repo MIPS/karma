@@ -1,0 +1,19 @@
+# vim:set ft=ioconfig:
+# configuration file for io
+
+#
+# These virtual buses are registerd in io's name space.
+#
+
+# Create empty system bus
+vm1_bus => new System_bus()
+{
+}
+
+vm2_bus => new System_bus()
+{
+}
+
+vm3_bus => new System_bus()
+{
+}
